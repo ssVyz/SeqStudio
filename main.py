@@ -1,5 +1,4 @@
-def main():
-    print("Hello from seqstudio-x1!")
+from seqstudio.__main__ import main
 
 
 if __name__ == "__main__":

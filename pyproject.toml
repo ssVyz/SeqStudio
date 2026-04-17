@@ -1,7 +1,20 @@
 [project]
 name = "seqstudio-x1"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bioinformatics-focused desktop IDE for FASTA/alignment files"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "PySide6>=6.6",
+    "biopython>=1.83",
+]
+
+[project.scripts]
+seqstudio = "seqstudio.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["seqstudio"]
