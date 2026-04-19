@@ -55,8 +55,7 @@ class ViewState(QObject):
     def zoom(self, delta: int) -> None:
         step = 1 if abs(delta) <= 2 else 2
         new_w = self.cell_width + (step if delta > 0 else -step)
-        new_h = int(round(new_w * (18 / 14)))
-        self.set_cell_size(new_w, new_h)
+        self.set_cell_size(new_w, self.cell_height)
 
     def show_letters(self) -> bool:
         return self.cell_width >= 7 and self.cell_height >= 10
