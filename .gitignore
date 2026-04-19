@@ -12,3 +12,7 @@ wheels/
 # context files
 *.md
 !README.md
+
+# claude files
+.claude/
+nul
