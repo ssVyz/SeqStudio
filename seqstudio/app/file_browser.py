@@ -6,17 +6,19 @@ from pathlib import Path
 from PySide6.QtCore import QDir, QFileInfo, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
     QLabel,
     QMenu,
+    QMessageBox,
     QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
-from seqstudio.app.io.format_detector import is_sequence_file
+from seqstudio.app.io.format_detector import FASTA_EXTS, is_sequence_file
 
 
 class SequenceFilterProxy(QSortFilterProxyModel):
@@ -60,7 +62,7 @@ class FileBrowser(QWidget):
         self.tree = QTreeView()
         self.tree.setModel(self._proxy)
         self.tree.setHeaderHidden(False)
-        self.tree.setSelectionMode(QTreeView.SingleSelection)
+        self.tree.setSelectionMode(QTreeView.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
         self.tree.doubleClicked.connect(self._on_double_click)
@@ -124,6 +126,19 @@ class FileBrowser(QWidget):
         path = self._index_path(index)
         menu = QMenu(self)
 
+        fasta_selected = [
+            p for p in self.current_selected_files() if p.suffix.lower() in FASTA_EXTS
+        ]
+        if len(fasta_selected) >= 2:
+            act_combine = QAction(
+                f"Combine {len(fasta_selected)} files to new FASTA...", self
+            )
+            act_combine.triggered.connect(
+                lambda: self._combine_to_new_fasta(fasta_selected)
+            )
+            menu.addAction(act_combine)
+            menu.addSeparator()
+
         if path.is_file():
             act_open = QAction("Open", self)
             act_open.triggered.connect(lambda: self.file_opened.emit(str(path)))
@@ -134,6 +149,37 @@ class FileBrowser(QWidget):
         menu.addAction(act_reveal)
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _combine_to_new_fasta(self, files: list[Path]) -> None:
+        if len(files) < 2:
+            return
+        suggested = files[0].with_name("combined.fasta")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Combine selected files as FASTA",
+            str(suggested),
+            "FASTA (*.fasta *.fa *.afa *.fas);;All files (*)",
+        )
+        if not path:
+            return
+        out = Path(path)
+        if out.suffix == "":
+            out = out.with_suffix(".fasta")
+
+        try:
+            with out.open("w", encoding="utf-8") as fout:
+                for src in files:
+                    ended_with_newline = True
+                    with src.open("r", encoding="utf-8", errors="replace") as fin:
+                        for line in fin:
+                            fout.write(line)
+                            ended_with_newline = line.endswith("\n")
+                    if not ended_with_newline:
+                        fout.write("\n")
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Combine to new FASTA",
+                f"Could not write {out}:\n{exc}",
+            )
 
 
 def _reveal(path: Path) -> None:
