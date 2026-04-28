@@ -19,7 +19,7 @@ from PySide6.QtGui import (
     QPen,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 
 from seqstudio.app.models.sequence_document import SequenceDocument
 from seqstudio.app.viewer.consensus import (
@@ -274,17 +274,63 @@ class AlignmentCanvas(QWidget):
             return
         super().keyPressEvent(event)
 
-    def _copy_selection_as_fasta(self) -> None:
+    def contextMenuEvent(self, event) -> None:
+        sel = self._state.selection
+        has_selection = sel is not None and not sel.is_empty()
+
+        menu = QMenu(self)
+        act_save = menu.addAction("Save selection as FASTA...")
+        act_copy = menu.addAction("Copy selection as FASTA")
+        for act in (act_save, act_copy):
+            act.setEnabled(has_selection)
+
+        chosen = menu.exec(event.globalPos())
+        if chosen is act_save:
+            self._save_selection_as_fasta()
+        elif chosen is act_copy:
+            self._copy_selection_as_fasta()
+
+    def _selection_fasta_lines(self) -> list[str] | None:
         sel = self._state.selection
         if sel is None or sel.is_empty():
-            return
+            return None
         lines = []
         for row in range(sel.row_start, sel.row_end):
             srow = self._doc.rows[row]
             lines.append(f">{srow.id}")
             lines.append(self._doc.slice(row, sel.col_start, sel.col_end))
+        return lines
+
+    def _copy_selection_as_fasta(self) -> None:
+        lines = self._selection_fasta_lines()
+        if lines is None:
+            return
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText("\n".join(lines))
+
+    def _save_selection_as_fasta(self) -> None:
+        from pathlib import Path
+
+        sel = self._state.selection
+        lines = self._selection_fasta_lines()
+        if lines is None or sel is None:
+            return
+
+        src = Path(self._doc.source_path)
+        suggested = src.with_name(
+            f"{src.stem}_cols{sel.col_start + 1}-{sel.col_end}.fasta"
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save selection as FASTA",
+            str(suggested),
+            "FASTA (*.fasta *.fa *.afa *.fas);;All files (*)",
+        )
+        if not path:
+            return
+        out = Path(path)
+        if out.suffix == "":
+            out = out.with_suffix(".fasta")
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _entropy_to_color(entropy: float) -> QColor:

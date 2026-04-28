@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
 
     def _build_tool_runner_dock(self) -> None:
         self.runner = ToolRunnerWidget()
+        self.runner.tools_rescanned.connect(self._refresh_tools_label)
         dock = QDockWidget("Tool Runner", self)
         dock.setObjectName("ToolRunnerDock")
         dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)

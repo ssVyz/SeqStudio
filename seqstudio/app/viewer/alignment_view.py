@@ -149,7 +149,7 @@ class AlignmentView(QWidget):
     # --- interactions ---------------------------------------------------
 
     def _wire_interactions(self) -> None:
-        self.ruler.column_clicked.connect(self._on_column_selected)
+        self.ruler.column_range_selected.connect(self._on_column_range_selected)
         self.minimap.jump_to_column.connect(self.go_to_column)
 
     def go_to_column(self, col: int) -> None:
@@ -160,9 +160,9 @@ class AlignmentView(QWidget):
         target_y = row * self.state.cell_height - self.canvas.height() // 2
         self.v_scroll.setValue(max(0, target_y))
 
-    def _on_column_selected(self, col: int) -> None:
+    def _on_column_range_selected(self, col_start: int, col_end: int) -> None:
         self.state.set_selection(
-            Selection(0, len(self.document), col, col + 1)
+            Selection(0, len(self.document), col_start, col_end)
         )
 
     # --- status bar hooks ----------------------------------------------

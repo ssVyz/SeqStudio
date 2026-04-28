@@ -6,6 +6,7 @@ and the user opens the results manually via the file browser.
 """
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +50,8 @@ class _HelpFetchThread(QThread):
 
 
 class ToolRunnerWidget(QWidget):
+    tools_rescanned = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cwd: Path = Path.cwd()
@@ -77,6 +80,12 @@ class ToolRunnerWidget(QWidget):
         self.install_label.setOpenExternalLinks(True)
         self.install_label.setTextFormat(Qt.RichText)
         row.addWidget(self.install_label)
+        self.rescan_button = QPushButton("Rescan")
+        self.rescan_button.setToolTip(
+            "Rescan PATH for installed tools (use after installing/updating a binary)."
+        )
+        self.rescan_button.clicked.connect(self._rescan_tools)
+        row.addWidget(self.rescan_button)
         outer.addLayout(row)
 
         # Freeform binary row (only shown in freeform mode)
@@ -198,6 +207,25 @@ class ToolRunnerWidget(QWidget):
 
     def statuses(self) -> list[ToolStatus]:
         return self._statuses
+
+    def _rescan_tools(self) -> None:
+        previous_binary: str | None = (
+            self._current_tool.binary if self._current_tool is not None else None
+        )
+        self._statuses = scan_tools()
+        self._populate_tools()
+        if previous_binary is not None:
+            for i in range(self.tool_combo.count()):
+                data = self.tool_combo.itemData(i)
+                if isinstance(data, ToolStatus) and data.definition.binary == previous_binary:
+                    self.tool_combo.setCurrentIndex(i)
+                    break
+        else:
+            for i in range(self.tool_combo.count()):
+                if self.tool_combo.itemData(i) is None:
+                    self.tool_combo.setCurrentIndex(i)
+                    break
+        self.tools_rescanned.emit()
 
     # --- signal handlers ----------------------------------------------
 
@@ -342,6 +370,17 @@ def _split_paths(text: str) -> list[str]:
     if not text:
         return []
     try:
+        if os.name == "nt":
+            # On Windows, '\\' is a path separator, not a shell escape.
+            # POSIX mode would strip the backslashes (C:\LAB\foo -> C:LABfoo).
+            tokens = shlex.split(text, posix=False)
+            return [_strip_outer_quotes(t) for t in tokens]
         return shlex.split(text, posix=True)
     except ValueError:
         return text.split()
+
+
+def _strip_outer_quotes(s: str) -> str:
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]
+    return s

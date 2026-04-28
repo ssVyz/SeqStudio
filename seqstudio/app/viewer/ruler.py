@@ -12,7 +12,7 @@ RULER_HEIGHT = 22
 
 
 class RulerWidget(QWidget):
-    column_clicked = Signal(int)
+    column_range_selected = Signal(int, int)   # col_start (incl.), col_end (excl.)
 
     def __init__(self, total_columns: int, state: ViewState, parent=None):
         super().__init__(parent)
@@ -20,8 +20,10 @@ class RulerWidget(QWidget):
         self._state = state
         self.setFixedHeight(RULER_HEIGHT)
         self.setAutoFillBackground(True)
+        self.setCursor(Qt.PointingHandCursor)
         self._font = QFont()
         self._font.setPointSize(8)
+        self._drag_anchor: int | None = None
         state.viewport_changed.connect(self.update)
         state.zoom_changed.connect(self.update)
 
@@ -64,12 +66,28 @@ class RulerWidget(QWidget):
         p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
         p.end()
 
+    def _column_at(self, x: float) -> int:
+        col = int((x + self._state.h_offset) // self._state.cell_width)
+        return max(0, min(max(0, self._total_columns - 1), col))
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.LeftButton:
             return
-        col = int((event.position().x() + self._state.h_offset) // self._state.cell_width)
-        col = max(0, min(self._total_columns - 1, col))
-        self.column_clicked.emit(col)
+        col = self._column_at(event.position().x())
+        self._drag_anchor = col
+        self.column_range_selected.emit(col, col + 1)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._drag_anchor is None or not (event.buttons() & Qt.LeftButton):
+            return
+        col = self._column_at(event.position().x())
+        a = self._drag_anchor
+        start, end = (a, col) if a <= col else (col, a)
+        self.column_range_selected.emit(start, end + 1)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_anchor = None
 
 
 def _tick_step(cell_width: int) -> int:

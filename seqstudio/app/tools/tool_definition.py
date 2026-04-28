@@ -90,6 +90,15 @@ CURATED_TOOLS: list[ToolDefinition] = [
         defaults="-m MFP -nt AUTO",
         output_suffix=".treefile",
     ),
+    ToolDefinition(
+        name="diffalign",
+        binary="diffalign",
+        install_url="tool_doc/diffalign_README.md",
+        input_flag="",                # positional: TEMPLATE REFERENCE
+        output_flag="-o",
+        defaults="",                  # parameters live in diffalign.ini
+        output_suffix="_diffalign.json",
+    ),
 ]
 
 
