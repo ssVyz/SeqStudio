@@ -10,6 +10,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -23,13 +24,18 @@ from seqstudio.app.file_browser import FileBrowser
 from seqstudio.app.models.sequence_document import SequenceDocument
 from seqstudio.app.settings import (
     last_folder,
+    save_consensus_coverage,
+    save_dots_for_matching,
     save_last_folder,
     save_scheme,
+    stored_consensus_coverage,
+    stored_dots_for_matching,
     stored_scheme,
 )
 from seqstudio.app.tools.runner_widget import ToolRunnerWidget
 from seqstudio.app.viewer.alignment_view import AlignmentView
 from seqstudio.app.viewer.colors import SCHEMES, get_scheme, scheme_names
+from seqstudio.app.viewer.display_options import DisplayOptionsDialog
 
 
 class MainWindow(QMainWindow):
@@ -145,6 +151,28 @@ class MainWindow(QMainWindow):
         act_zoom_out.triggered.connect(lambda: self._current_view() and self._current_view().state.zoom(-1))
         tb.addAction(act_zoom_out)
 
+        tb.addSeparator()
+
+        act_calc_consensus = QAction("Calculate Consensus", self)
+        act_calc_consensus.setShortcut(QKeySequence("Ctrl+Shift+K"))
+        act_calc_consensus.triggered.connect(self._on_calculate_consensus)
+        tb.addAction(act_calc_consensus)
+        self._act_calc_consensus = act_calc_consensus
+
+        self.coverage_spin = QDoubleSpinBox()
+        self.coverage_spin.setDecimals(2)
+        self.coverage_spin.setRange(0.00, 100.00)
+        self.coverage_spin.setSingleStep(1.00)
+        self.coverage_spin.setSuffix(" %")
+        self.coverage_spin.setFixedWidth(96)
+        self.coverage_spin.setToolTip(
+            "Coverage threshold: smallest IUPAC ambiguity per column "
+            "whose cumulative frequency reaches this percentage."
+        )
+        saved_pct = stored_consensus_coverage()
+        self.coverage_spin.setValue(60.00 if saved_pct is None else saved_pct)
+        tb.addWidget(self.coverage_spin)
+
     def _build_menu(self) -> None:
         mb = self.menuBar()
 
@@ -158,6 +186,8 @@ class MainWindow(QMainWindow):
         act_open_file.triggered.connect(self._on_open_file)
 
         file_menu.addSeparator()
+        file_menu.addAction(self._act_calc_consensus)
+
         act_export = file_menu.addAction("Export Consensus as FASTA...")
         act_export.triggered.connect(self._on_export_consensus)
 
@@ -165,6 +195,10 @@ class MainWindow(QMainWindow):
         act_quit = file_menu.addAction("Quit")
         act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self.close)
+
+        settings_menu = mb.addMenu("&Settings")
+        act_display_opts = settings_menu.addAction("Display options...")
+        act_display_opts.triggered.connect(self._on_display_options)
 
         view_menu = mb.addMenu("&View")
         view_menu.addAction(self._browser_dock.toggleViewAction())
@@ -226,6 +260,7 @@ class MainWindow(QMainWindow):
         view.status_message.connect(self._hover_label.setText)
         current_scheme = get_scheme(self.scheme_combo.currentText())
         view.state.set_scheme(current_scheme)
+        view.state.set_dots_for_matching(stored_dots_for_matching())
         self._views[key] = view
         self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)
@@ -271,6 +306,28 @@ class MainWindow(QMainWindow):
         motif = self.find_edit.text().strip()
         hits = view.search(motif)
         self._hover_label.setText(f"Search '{motif}': {hits} matches")
+
+    def _on_calculate_consensus(self) -> None:
+        view = self._current_view()
+        if view is None:
+            QMessageBox.information(
+                self, "Calculate Consensus",
+                "Open a sequence file first."
+            )
+            return
+        pct = self.coverage_spin.value()
+        save_consensus_coverage(pct)
+        view.calculate_consensus(coverage=pct / 100.0)
+
+    def _on_display_options(self) -> None:
+        current = stored_dots_for_matching()
+        dlg = DisplayOptionsDialog(current, parent=self)
+        if dlg.exec() != DisplayOptionsDialog.Accepted:
+            return
+        enabled = dlg.dots_for_matching()
+        save_dots_for_matching(enabled)
+        for view in self._views.values():
+            view.state.set_dots_for_matching(enabled)
 
     def _on_export_consensus(self) -> None:
         view = self._current_view()

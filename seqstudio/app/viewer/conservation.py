@@ -147,17 +147,30 @@ class ConservationTrack(QWidget):
         self._worker.chunk_ready.connect(self._on_chunk)
         self._worker.result.connect(self._on_result)
         self._worker.result.connect(self._thread.quit)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
 
     def cancel(self) -> None:
-        if self._worker is not None:
-            self._worker.cancel()
-        if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait(100)
+        worker = self._worker
+        thread = self._thread
         self._worker = None
         self._thread = None
+        if worker is not None:
+            try:
+                worker.cancel()
+            except RuntimeError:
+                pass
+        if thread is not None:
+            try:
+                thread.quit()
+                thread.wait(100)
+            except RuntimeError:
+                pass
+
+    def _on_thread_finished(self) -> None:
+        self._thread = None
+        self._worker = None
 
     def _on_chunk(self, start: int, end: int, snapshot: ConservationResult) -> None:
         self.entropy = snapshot.entropy
@@ -189,7 +202,7 @@ class ConservationTrack(QWidget):
             f.setPointSize(8)
             p.setFont(f)
             p.drawText(self.rect(), Qt.AlignCenter,
-                       "Conservation: (not computed — open an aligned file)")
+                       "Conservation: (not computed — click 'Calculate Consensus')")
             p.end()
             return
 

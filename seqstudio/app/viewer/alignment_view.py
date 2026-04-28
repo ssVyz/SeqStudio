@@ -30,7 +30,11 @@ class AlignmentView(QWidget):
 
         self.conservation = ConservationTrack(document, self.state)
         self.consensus = ConsensusTrack(document, self.state)
-        self.canvas = AlignmentCanvas(document, self.state, conservation=self.conservation)
+        self.canvas = AlignmentCanvas(
+            document, self.state,
+            conservation=self.conservation,
+            consensus=self.consensus,
+        )
         self.ruler = RulerWidget(document.display_length, self.state)
         self.name_panel = NamePanel(document, self.state)
         self.minimap = MinimapWidget(document, self.state)
@@ -45,13 +49,27 @@ class AlignmentView(QWidget):
         self._update_scroll_ranges()
         self.state.zoom_changed.connect(self._update_scroll_ranges)
 
-        # Kick off background computations for aligned docs.
-        if document.is_aligned:
-            self.conservation.recompute()
-            self.consensus.recompute()
-
         self.canvas.hovered_cell_changed.connect(self._on_hover)
         self.state.selection_changed.connect(self._on_selection)
+
+    # --- consensus -----------------------------------------------------
+
+    def calculate_consensus(self, coverage: float | None = None) -> None:
+        """Force-treat the open document as aligned and recompute tracks.
+
+        `coverage` is in [0.0, 1.0]; if None the existing config value is kept.
+        """
+        doc = self.document
+        if not doc.is_aligned or doc.alignment_length is None:
+            max_len = max((r.length for r in doc.rows), default=0)
+            doc.is_aligned = True
+            doc.alignment_length = max_len
+            self._update_scroll_ranges()
+        if coverage is not None:
+            cfg = self.consensus.config()
+            cfg.coverage_threshold = max(0.0, min(1.0, coverage))
+        self.conservation.recompute()
+        self.consensus.recompute()
 
     # --- layout ---------------------------------------------------------
 
@@ -60,35 +78,33 @@ class AlignmentView(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
 
-        corner = QWidget()
-        corner.setAutoFillBackground(True)
-        pal = corner.palette()
+        ruler_corner = QWidget()
+        ruler_corner.setAutoFillBackground(True)
+        pal = ruler_corner.palette()
         pal.setColor(QPalette.Window, QColor("#f0f0f3"))
-        corner.setPalette(pal)
-        corner.setFixedSize(self.name_panel.minimumWidth(), self.ruler.height())
-
-        grid.addWidget(corner,             0, 0)
-        grid.addWidget(self.ruler,         0, 1)
-        grid.addWidget(self.name_panel,    1, 0)
-        grid.addWidget(self.canvas,        1, 1)
-        grid.addWidget(self.v_scroll,      1, 2, 4, 1)
+        ruler_corner.setPalette(pal)
+        ruler_corner.setFixedSize(self.name_panel.minimumWidth(), self.ruler.height())
 
         consensus_label = _pinned_label("consensus")
         conservation_label = _pinned_label("conservation")
         minimap_label = _pinned_label("overview")
-        consensus_label.setFixedWidth(self.name_panel.minimumWidth())
-        conservation_label.setFixedWidth(self.name_panel.minimumWidth())
-        minimap_label.setFixedWidth(self.name_panel.minimumWidth())
+        for lbl in (consensus_label, conservation_label, minimap_label):
+            lbl.setFixedWidth(self.name_panel.minimumWidth())
 
-        grid.addWidget(consensus_label,      2, 0)
-        grid.addWidget(self.consensus,       2, 1)
-        grid.addWidget(conservation_label,   3, 0)
-        grid.addWidget(self.conservation,    3, 1)
-        grid.addWidget(minimap_label,        4, 0)
-        grid.addWidget(self.minimap,         4, 1)
-        grid.addWidget(self.h_scroll,        5, 1)
+        grid.addWidget(consensus_label,    0, 0)
+        grid.addWidget(self.consensus,     0, 1)
+        grid.addWidget(conservation_label, 1, 0)
+        grid.addWidget(self.conservation,  1, 1)
+        grid.addWidget(ruler_corner,       2, 0)
+        grid.addWidget(self.ruler,         2, 1)
+        grid.addWidget(self.name_panel,    3, 0)
+        grid.addWidget(self.canvas,        3, 1)
+        grid.addWidget(self.v_scroll,      0, 2, 4, 1)
+        grid.addWidget(minimap_label,      4, 0)
+        grid.addWidget(self.minimap,       4, 1)
+        grid.addWidget(self.h_scroll,      5, 1)
 
-        grid.setRowStretch(1, 1)
+        grid.setRowStretch(3, 1)
         grid.setColumnStretch(1, 1)
 
     # --- scroll bars ----------------------------------------------------
@@ -100,6 +116,14 @@ class AlignmentView(QWidget):
         self.v_scroll.valueChanged.connect(
             lambda v: self.state.set_offsets(self.state.h_offset, v)
         )
+        self.canvas.scroll_v_requested.connect(self._scroll_v_by)
+        self.canvas.scroll_h_requested.connect(self._scroll_h_by)
+
+    def _scroll_v_by(self, delta_pixels: int) -> None:
+        self.v_scroll.setValue(self.v_scroll.value() + delta_pixels)
+
+    def _scroll_h_by(self, delta_pixels: int) -> None:
+        self.h_scroll.setValue(self.h_scroll.value() + delta_pixels)
 
     def _update_scroll_ranges(self) -> None:
         cw = self.state.cell_width

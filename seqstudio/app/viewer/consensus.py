@@ -1,5 +1,8 @@
 """Consensus sequence: pinned row rendered below the alignment (but above the
-conservation track). Computed once per alignment open; rules are configurable.
+conservation track). Recomputed on demand when the user clicks "Calculate
+Consensus". The algorithm picks the smallest set of bases per column whose
+cumulative frequency reaches the requested coverage threshold, then maps that
+set to its IUPAC ambiguity code (worst case `N`).
 """
 from __future__ import annotations
 
@@ -40,11 +43,58 @@ IUPAC = {
 }
 
 
+# Reverse mapping: IUPAC letter → set of bases it represents (used by the
+# canvas to decide whether a residue "matches" the consensus when the user
+# turns on dot-matching display.)
+IUPAC_EXPAND: dict[str, frozenset[str]] = {
+    "A": frozenset("A"),
+    "C": frozenset("C"),
+    "G": frozenset("G"),
+    "T": frozenset("T"),
+    "U": frozenset("U"),
+    "R": frozenset("AG"),
+    "Y": frozenset("CTU"),
+    "K": frozenset("GTU"),
+    "M": frozenset("AC"),
+    "S": frozenset("GC"),
+    "W": frozenset("ATU"),
+    "B": frozenset("CGTU"),
+    "D": frozenset("AGTU"),
+    "H": frozenset("ACTU"),
+    "V": frozenset("ACG"),
+    "N": frozenset("ACGTU"),
+    "-": frozenset(),
+    ".": frozenset(),
+}
+
+
+UNAMBIGUOUS_BASES = frozenset("ACGTU")
+
+
+def is_unambiguous(consensus_char: str) -> bool:
+    """True only for plain A/C/G/T/U — never for IUPAC ambiguity letters."""
+    if not consensus_char:
+        return False
+    return consensus_char.upper() in UNAMBIGUOUS_BASES
+
+
+def matches_consensus(residue: str, consensus_char: str) -> bool:
+    """Whether `residue` is represented by the IUPAC `consensus_char`."""
+    if not residue or not consensus_char:
+        return False
+    r = residue.upper()
+    if r in ("-", "."):
+        return False
+    expand = IUPAC_EXPAND.get(consensus_char.upper())
+    if expand is None:
+        return r == consensus_char.upper()
+    return r in expand
+
+
 @dataclass
 class ConsensusConfig:
-    majority_threshold: float = 0.6   # IUPAC below this
-    gap_threshold: float = 0.5        # gaps above this → '-'
-    use_iupac: bool = True
+    coverage_threshold: float = 0.60   # cumulative non-gap coverage to satisfy
+    gap_threshold: float = 0.50        # gaps above this fraction → '-'
 
 
 class ConsensusWorker(QObject):
@@ -63,7 +113,8 @@ class ConsensusWorker(QObject):
         n_cols = doc.alignment_length
         n_rows = len(doc)
         seqs = [doc.sequence(r) for r in range(n_rows)]
-        out = []
+        coverage = max(0.0, min(1.0, self._config.coverage_threshold))
+        out: list[str] = []
         for col in range(n_cols):
             counts: dict[str, int] = {}
             gaps = 0
@@ -76,25 +127,33 @@ class ConsensusWorker(QObject):
                     gaps += 1
                     continue
                 counts[ch] = counts.get(ch, 0) + 1
-            total = n_rows
-            if total > 0 and gaps / total >= self._config.gap_threshold:
+            if n_rows > 0 and gaps / n_rows >= self._config.gap_threshold:
                 out.append("-")
                 continue
             if not counts:
                 out.append("-")
                 continue
-            top_ch, top_n = max(counts.items(), key=lambda kv: kv[1])
             denom = sum(counts.values())
-            if top_n / denom >= self._config.majority_threshold or not self._config.use_iupac:
-                out.append(top_ch)
-                continue
-            key = frozenset(counts.keys())
-            out.append(IUPAC.get(key, "N"))
+            sorted_bases = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            cumulative = 0.0
+            selected: list[str] = []
+            for base, cnt in sorted_bases:
+                selected.append(base)
+                cumulative += cnt / denom
+                if cumulative >= coverage:
+                    break
+            if len(selected) == 1:
+                out.append(selected[0])
+            else:
+                key = frozenset(selected)
+                out.append(IUPAC.get(key, "N"))
         self.result.emit("".join(out))
 
 
 class ConsensusTrack(QWidget):
     """Pinned row displaying the consensus sequence below the alignment."""
+
+    consensus_changed = Signal()
 
     def __init__(self, document: SequenceDocument, state: ViewState, parent=None):
         super().__init__(parent)
@@ -129,19 +188,29 @@ class ConsensusTrack(QWidget):
         self._thread.started.connect(self._worker.run)
         self._worker.result.connect(self._on_result)
         self._worker.result.connect(self._thread.quit)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
 
     def _cancel(self) -> None:
-        if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait(100)
+        thread = self._thread
+        self._worker = None
+        self._thread = None
+        if thread is not None:
+            try:
+                thread.quit()
+                thread.wait(100)
+            except RuntimeError:
+                pass
+
+    def _on_thread_finished(self) -> None:
         self._thread = None
         self._worker = None
 
     def _on_result(self, s: str) -> None:
         self._consensus = s
         self.update()
+        self.consensus_changed.emit()
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
@@ -164,7 +233,7 @@ class ConsensusTrack(QWidget):
         if not self._consensus:
             p.setPen(QPen(QColor("#777")))
             p.drawText(self.rect(), Qt.AlignCenter,
-                       "Consensus: (not computed — open an aligned file)")
+                       "Consensus: (not computed — click 'Calculate Consensus')")
             p.end()
             return
 

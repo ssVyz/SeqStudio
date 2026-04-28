@@ -22,6 +22,10 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from seqstudio.app.models.sequence_document import SequenceDocument
+from seqstudio.app.viewer.consensus import (
+    is_unambiguous as _consensus_unambiguous,
+    matches_consensus as _matches,
+)
 from seqstudio.app.viewer.view_state import Selection, ViewState
 
 
@@ -29,12 +33,16 @@ class AlignmentCanvas(QWidget):
     """Draws residue cells for a SequenceDocument within the current viewport."""
 
     hovered_cell_changed = Signal(int, int)   # row, col (-1, -1 when none)
+    scroll_v_requested = Signal(int)          # delta in pixels (positive = scroll down)
+    scroll_h_requested = Signal(int)          # delta in pixels (positive = scroll right)
 
-    def __init__(self, document: SequenceDocument, state: ViewState, conservation=None, parent=None):
+    def __init__(self, document: SequenceDocument, state: ViewState,
+                 conservation=None, consensus=None, parent=None):
         super().__init__(parent)
         self._doc = document
         self._state = state
         self._conservation = conservation   # ConservationTrack | None (for entropy values)
+        self._consensus = consensus         # ConsensusTrack | None (for dot-matching)
 
         self.setAutoFillBackground(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -52,6 +60,8 @@ class AlignmentCanvas(QWidget):
         state.selection_changed.connect(self.update)
         state.colour_changed.connect(self.update)
         state.highlight_changed.connect(self.update)
+        if consensus is not None:
+            consensus.consensus_changed.connect(self.update)
 
     def sizeHint(self):
         return self.size()
@@ -117,6 +127,11 @@ class AlignmentCanvas(QWidget):
         conservation_bg = state.show_conservation_bg and self._conservation is not None
         entropy_values = self._conservation.entropy if conservation_bg else None
 
+        consensus_str = self._consensus.consensus() if self._consensus is not None else ""
+        dots_mode = state.dots_for_matching and bool(consensus_str)
+        dot_bg = QColor("#dcdcdf")
+        dot_pen = QPen(QColor("#555"))
+
         p.setFont(self._font)
         fm = QFontMetrics(self._font)
         text_pen = QPen(scheme.text)
@@ -129,19 +144,31 @@ class AlignmentCanvas(QWidget):
                 x_left = col * cw - state.h_offset
                 cell_rect = QRect(x_left, y_top, cw, ch)
 
-                if conservation_bg and entropy_values is not None and col < len(entropy_values):
-                    bg = _entropy_to_color(entropy_values[col])
+                is_match = (
+                    dots_mode
+                    and col < len(consensus_str)
+                    and _consensus_unambiguous(consensus_str[col])
+                    and _matches(ch_, consensus_str[col])
+                )
+
+                if is_match:
+                    p.fillRect(cell_rect, dot_bg)
+                elif conservation_bg and entropy_values is not None and col < len(entropy_values):
+                    p.fillRect(cell_rect, _entropy_to_color(entropy_values[col]))
                 else:
-                    bg = scheme.background_for(ch_)
-                p.fillRect(cell_rect, bg)
+                    p.fillRect(cell_rect, scheme.background_for(ch_))
 
                 if show_letters:
-                    p.setPen(text_pen)
-                    # Draw char centred in cell
-                    tw = fm.horizontalAdvance(ch_)
+                    if is_match:
+                        p.setPen(dot_pen)
+                        glyph = "."
+                    else:
+                        p.setPen(text_pen)
+                        glyph = ch_
+                    tw = fm.horizontalAdvance(glyph)
                     tx = x_left + (cw - tw) / 2
                     ty = y_top + (ch + fm.ascent() - fm.descent()) / 2
-                    p.drawText(QPointF(tx, ty), ch_)
+                    p.drawText(QPointF(tx, ty), glyph)
 
         # Search match highlights
         if state.search_matches:
@@ -223,7 +250,22 @@ class AlignmentCanvas(QWidget):
             self._state.zoom(1 if event.angleDelta().y() > 0 else -1)
             event.accept()
             return
-        super().wheelEvent(event)
+
+        ad = event.angleDelta()
+        rows_per_notch = 3
+        ch = self._state.cell_height
+        cw = self._state.cell_width
+
+        if event.modifiers() & Qt.ShiftModifier and ad.y() != 0:
+            self.scroll_h_requested.emit(int(-ad.y() / 120 * cw * rows_per_notch))
+            event.accept()
+            return
+
+        if ad.y() != 0:
+            self.scroll_v_requested.emit(int(-ad.y() / 120 * ch * rows_per_notch))
+        if ad.x() != 0:
+            self.scroll_h_requested.emit(int(-ad.x() / 120 * cw * rows_per_notch))
+        event.accept()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:

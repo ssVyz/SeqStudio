@@ -16,3 +16,4 @@ wheels/
 # claude files
 .claude/
 nul
+*.json

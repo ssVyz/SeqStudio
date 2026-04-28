@@ -42,6 +42,7 @@ class ViewState(QObject):
         self.show_conservation_bg: bool = False
         self.coord_mode: str = "alignment"   # or "sequence"
         self.search_matches: dict[int, list[tuple[int, int]]] = {}
+        self.dots_for_matching: bool = False
 
     # Zoom ----------------------------------------------------------------
     def set_cell_size(self, width: int, height: int) -> None:
@@ -82,6 +83,11 @@ class ViewState(QObject):
         if self.show_conservation_bg != enabled:
             self.show_conservation_bg = enabled
             self.highlight_changed.emit()
+
+    def set_dots_for_matching(self, enabled: bool) -> None:
+        if self.dots_for_matching != enabled:
+            self.dots_for_matching = enabled
+            self.colour_changed.emit()
 
     def set_coord_mode(self, mode: str) -> None:
         if mode not in ("alignment", "sequence"):
