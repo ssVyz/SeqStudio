@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QDir, QFileInfo, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from seqstudio.app.io.format_detector import FASTA_EXTS, is_sequence_file
+from seqstudio.app.io.sam_align import create_alignment_from_sam
+from seqstudio.app.sam_align_dialog import SamAlignDialog
 
 
 class SequenceFilterProxy(QSortFilterProxyModel):
@@ -41,7 +44,10 @@ class SequenceFilterProxy(QSortFilterProxyModel):
             return name not in (".", "..") and not name.startswith(".")
         if self.show_all:
             return not info.fileName().startswith(".") and info.suffix() != "ssidx"
-        return is_sequence_file(Path(info.filePath()))
+        p = Path(info.filePath())
+        if p.suffix.lower() == ".sam":
+            return True
+        return is_sequence_file(p)
 
 
 class FileBrowser(QWidget):
@@ -126,9 +132,10 @@ class FileBrowser(QWidget):
         path = self._index_path(index)
         menu = QMenu(self)
 
-        fasta_selected = [
-            p for p in self.current_selected_files() if p.suffix.lower() in FASTA_EXTS
-        ]
+        selected = self.current_selected_files()
+        fasta_selected = [p for p in selected if p.suffix.lower() in FASTA_EXTS]
+        sam_selected = [p for p in selected if p.suffix.lower() == ".sam"]
+
         if len(fasta_selected) >= 2:
             act_combine = QAction(
                 f"Combine {len(fasta_selected)} files to new FASTA...", self
@@ -137,6 +144,16 @@ class FileBrowser(QWidget):
                 lambda: self._combine_to_new_fasta(fasta_selected)
             )
             menu.addAction(act_combine)
+            menu.addSeparator()
+
+        if len(fasta_selected) == 1 and len(sam_selected) <= 1:
+            fasta_one = fasta_selected[0]
+            sam_one = sam_selected[0] if sam_selected else None
+            act_align = QAction("Create alignment from SAM file...", self)
+            act_align.triggered.connect(
+                lambda: self._create_alignment_from_sam(fasta_one, sam_one)
+            )
+            menu.addAction(act_align)
             menu.addSeparator()
 
         if path.is_file():
@@ -149,6 +166,63 @@ class FileBrowser(QWidget):
         menu.addAction(act_reveal)
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _create_alignment_from_sam(
+        self, fasta_path: Path, sam_path: Path | None
+    ) -> None:
+        dlg = SamAlignDialog(fasta_path=fasta_path, sam_path=sam_path, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        fasta, sam, out = dlg.values()
+
+        if not str(fasta).strip() or not fasta.is_file():
+            QMessageBox.warning(
+                self, "Create alignment from SAM",
+                f"Query FASTA not found:\n{fasta}",
+            )
+            return
+        if not str(sam).strip() or not sam.is_file():
+            QMessageBox.warning(
+                self, "Create alignment from SAM",
+                f"SAM file not found:\n{sam}",
+            )
+            return
+        if not str(out).strip():
+            QMessageBox.warning(
+                self, "Create alignment from SAM",
+                "Please choose an output FASTA path.",
+            )
+            return
+        if out.exists():
+            resp = QMessageBox.question(
+                self, "Create alignment from SAM",
+                f"Output file already exists:\n{out}\n\nOverwrite?",
+            )
+            if resp != QMessageBox.Yes:
+                return
+
+        try:
+            result = create_alignment_from_sam(fasta, sam, out)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Create alignment from SAM", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Create alignment from SAM",
+                f"Could not write output:\n{exc}",
+            )
+            return
+
+        msg = (
+            f"Wrote aligned FASTA: {result.aligned_count} sequences "
+            f"× {result.total_columns} columns\n{result.output_path}"
+        )
+        if result.unmapped_names:
+            n = len(result.unmapped_names)
+            sample = ", ".join(result.unmapped_names[:5])
+            more = f" and {n - 5} more" if n > 5 else ""
+            msg += f"\n\n{n} unmapped sequence(s) excluded: {sample}{more}"
+        QMessageBox.information(self, "Create alignment from SAM", msg)
 
     def _combine_to_new_fasta(self, files: list[Path]) -> None:
         if len(files) < 2:

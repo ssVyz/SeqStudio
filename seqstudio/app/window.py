@@ -1,5 +1,5 @@
-"""MainWindow: JetBrains-style layout wiring the file browser, alignment
-viewer (centre), and Tool Runner (bottom dock).
+"""MainWindow: JetBrains-style layout wiring the file browser and alignment
+viewer (centre).
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from seqstudio.app.settings import (
     stored_dots_for_matching,
     stored_scheme,
 )
-from seqstudio.app.tools.runner_widget import ToolRunnerWidget
+from seqstudio.app.terminal import open_terminal_in
 from seqstudio.app.viewer.alignment_view import AlignmentView
 from seqstudio.app.viewer.colors import SCHEMES, get_scheme, scheme_names
 from seqstudio.app.viewer.display_options import DisplayOptionsDialog
@@ -45,10 +45,10 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self._views: dict[str, AlignmentView] = {}
+        self._cwd: Path | None = None
 
         self._build_central()
         self._build_file_browser_dock()
-        self._build_tool_runner_dock()
         self._build_toolbar()
         self._build_menu()
         self._build_statusbar()
@@ -76,7 +76,6 @@ class MainWindow(QMainWindow):
     def _build_file_browser_dock(self) -> None:
         self.browser = FileBrowser()
         self.browser.file_opened.connect(self.open_file)
-        self.browser.file_selected.connect(self._on_file_selected)
 
         dock = QDockWidget("Files", self)
         dock.setObjectName("FileBrowserDock")
@@ -84,16 +83,6 @@ class MainWindow(QMainWindow):
         dock.setWidget(self.browser)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._browser_dock = dock
-
-    def _build_tool_runner_dock(self) -> None:
-        self.runner = ToolRunnerWidget()
-        self.runner.tools_rescanned.connect(self._refresh_tools_label)
-        dock = QDockWidget("Tool Runner", self)
-        dock.setObjectName("ToolRunnerDock")
-        dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
-        dock.setWidget(self.runner)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
-        self._runner_dock = dock
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
@@ -105,6 +94,15 @@ class MainWindow(QMainWindow):
         act_open_folder.setShortcut(QKeySequence("Ctrl+K"))
         act_open_folder.triggered.connect(self._on_open_folder)
         tb.addAction(act_open_folder)
+
+        self._act_open_terminal = QAction("Open Terminal Here", self)
+        self._act_open_terminal.setShortcut(QKeySequence("Ctrl+`"))
+        self._act_open_terminal.setToolTip(
+            "Open a system terminal in the currently open folder (Ctrl+`)"
+        )
+        self._act_open_terminal.triggered.connect(self._on_open_terminal)
+        self._act_open_terminal.setEnabled(False)
+        tb.addAction(self._act_open_terminal)
 
         tb.addSeparator()
 
@@ -187,6 +185,9 @@ class MainWindow(QMainWindow):
         act_open_file.triggered.connect(self._on_open_file)
 
         file_menu.addSeparator()
+        file_menu.addAction(self._act_open_terminal)
+
+        file_menu.addSeparator()
         file_menu.addAction(self._act_calc_consensus)
 
         act_export = file_menu.addAction("Export Consensus as FASTA...")
@@ -203,7 +204,6 @@ class MainWindow(QMainWindow):
 
         view_menu = mb.addMenu("&View")
         view_menu.addAction(self._browser_dock.toggleViewAction())
-        view_menu.addAction(self._runner_dock.toggleViewAction())
 
         help_menu = mb.addMenu("&Help")
         act_about = help_menu.addAction("About SeqStudio")
@@ -211,15 +211,7 @@ class MainWindow(QMainWindow):
 
     def _build_statusbar(self) -> None:
         self._hover_label = QLabel("")
-        self._tools_label = QLabel("")
         self.statusBar().addWidget(self._hover_label, 1)
-        self.statusBar().addPermanentWidget(self._tools_label)
-        self._refresh_tools_label()
-
-    def _refresh_tools_label(self) -> None:
-        installed = [s for s in self.runner.statuses() if s.installed]
-        total = len(self.runner.statuses())
-        self._tools_label.setText(f"Tools: {len(installed)}/{total} installed")
 
     # --- file / folder actions -----------------------------------------
 
@@ -240,8 +232,9 @@ class MainWindow(QMainWindow):
         path = Path(path)
         if not path.is_dir():
             return
+        self._cwd = path
         self.browser.set_root(path)
-        self.runner.set_cwd(path)
+        self._act_open_terminal.setEnabled(True)
         save_last_folder(str(path))
 
     def open_file(self, path: str | Path) -> None:
@@ -267,8 +260,13 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(view)
         self.setWindowTitle(f"SeqStudio — {path.name}")
 
-    def _on_file_selected(self, path: str) -> None:
-        self.runner.set_input_files([Path(path)])
+    def _on_open_terminal(self) -> None:
+        if self._cwd is None:
+            return
+        try:
+            open_terminal_in(self._cwd)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Open Terminal", f"Failed to open terminal:\n{exc}")
 
     def _current_view(self) -> AlignmentView | None:
         w = self._stack.currentWidget()

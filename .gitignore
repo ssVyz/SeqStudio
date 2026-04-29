@@ -18,3 +18,7 @@ wheels/
 nul
 *.json
 tool_doc/
+
+# troubleshoot files
+troubleshoot_files/
+*.fasta
