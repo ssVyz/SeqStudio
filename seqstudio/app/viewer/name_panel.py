@@ -2,8 +2,18 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPaintEvent, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QContextMenuEvent,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPaintEvent,
+    QPainter,
+    QPen,
+)
+from PySide6.QtWidgets import QMenu, QWidget
 
 from seqstudio.app.models.sequence_document import SequenceDocument
 from seqstudio.app.viewer.view_state import Selection, ViewState
@@ -11,6 +21,7 @@ from seqstudio.app.viewer.view_state import Selection, ViewState
 
 class NamePanel(QWidget):
     row_clicked = Signal(int, bool)  # row, shift_held
+    delete_rows_requested = Signal(list)  # list[int] of rows to delete
 
     def __init__(self, document: SequenceDocument, state: ViewState, parent=None):
         super().__init__(parent)
@@ -58,6 +69,38 @@ class NamePanel(QWidget):
         p.setPen(QPen(QColor("#d0d0d4")))
         p.drawLine(self.width() - 1, 0, self.width() - 1, self.height())
         p.end()
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        if len(self._doc) == 0:
+            return
+        y = event.pos().y() + self._state.v_offset
+        cursor_row = int(y // self._state.cell_height)
+        if not (0 <= cursor_row < len(self._doc)):
+            return
+
+        sel = self._state.selection
+        is_name_panel_selection = (
+            sel is not None
+            and sel.row_start <= cursor_row < sel.row_end
+            and sel.col_start == 0
+            and sel.col_end == self._doc.display_length
+        )
+        if is_name_panel_selection:
+            rows = list(range(sel.row_start, sel.row_end))
+        else:
+            self._state.set_selection(
+                Selection(cursor_row, cursor_row + 1, 0, self._doc.display_length)
+            )
+            rows = [cursor_row]
+
+        menu = QMenu(self)
+        label = "Delete sequence" if len(rows) == 1 else f"Delete {len(rows)} sequences"
+        act = QAction(f"{label}...", self)
+        act.triggered.connect(
+            lambda checked=False, r=rows: self.delete_rows_requested.emit(r)
+        )
+        menu.addAction(act)
+        menu.exec(event.globalPos())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.LeftButton:

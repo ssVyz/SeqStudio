@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QGridLayout, QLabel, QScrollBar, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QMessageBox, QScrollBar, QWidget
 
 from seqstudio.app.models.sequence_document import SequenceDocument
 from seqstudio.app.viewer.canvas import AlignmentCanvas
@@ -51,6 +51,7 @@ class AlignmentView(QWidget):
 
         self.canvas.hovered_cell_changed.connect(self._on_hover)
         self.state.selection_changed.connect(self._on_selection)
+        self.name_panel.delete_rows_requested.connect(self._on_delete_rows_requested)
 
     # --- consensus -----------------------------------------------------
 
@@ -191,6 +192,56 @@ class AlignmentView(QWidget):
         self.status_message.emit(
             f"Selection: {n_rows} rows × cols {c0}–{c1} (alignment, 1-based)"
         )
+
+    # --- delete sequences -----------------------------------------------
+
+    def _on_delete_rows_requested(self, rows: list[int]) -> None:
+        rows = sorted({r for r in rows if 0 <= r < len(self.document)})
+        if not rows:
+            return
+
+        names = [self.document.rows[r].id for r in rows]
+        n = len(names)
+        plural = "sequence" if n == 1 else "sequences"
+        sample = "\n".join(f"  • {nm}" for nm in names[:5])
+        if n > 5:
+            sample += f"\n  • ... and {n - 5} more"
+        msg = (
+            f"Delete {n} {plural} from the source file?\n\n"
+            f"This will modify the file on disk and cannot be undone:\n"
+            f"{self.document.source_path}\n\n"
+            f"Sequences to delete:\n{sample}"
+        )
+        resp = QMessageBox.warning(
+            self, "Delete sequences", msg,
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        try:
+            self.document.delete_rows(rows)
+        except (ValueError, OSError, NotImplementedError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Delete sequences", str(exc))
+            return
+
+        self._refresh_after_edit()
+        self.status_message.emit(
+            f"Deleted {n} {plural}; {len(self.document)} remaining."
+        )
+
+    def _refresh_after_edit(self) -> None:
+        """Repaint and recompute everything after the document changed in place."""
+        self.state.set_selection(None)
+        self.state.clear_search()
+        self.ruler.set_total_columns(self.document.display_length)
+        self._update_scroll_ranges()
+        self.conservation.recompute()
+        self.consensus.recompute()
+        self.minimap._pixmap = None
+        for w in (self.canvas, self.name_panel, self.ruler,
+                  self.minimap, self.consensus, self.conservation):
+            w.update()
 
     # --- search ---------------------------------------------------------
 
