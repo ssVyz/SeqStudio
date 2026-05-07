@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from seqstudio.app.file_browser import FileBrowser
+from seqstudio.app.io.format_detector import TEXT_EXTS
 from seqstudio.app.models.sequence_document import SequenceDocument
 from seqstudio.app.settings import (
     last_folder,
@@ -33,6 +34,7 @@ from seqstudio.app.settings import (
     stored_scheme,
 )
 from seqstudio.app.terminal import open_terminal_in
+from seqstudio.app.text_view import TextView
 from seqstudio.app.viewer.alignment_view import AlignmentView
 from seqstudio.app.viewer.colors import SCHEMES, get_scheme, scheme_names
 from seqstudio.app.viewer.display_options import DisplayOptionsDialog
@@ -44,7 +46,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SeqStudio")
         self.resize(1400, 900)
 
-        self._views: dict[str, AlignmentView] = {}
+        self._views: dict[str, AlignmentView | TextView] = {}
         self._cwd: Path | None = None
 
         self._build_central()
@@ -222,8 +224,10 @@ class MainWindow(QMainWindow):
 
     def _on_open_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Sequence File", "",
-            "Sequence files (*.fasta *.fa *.fna *.ffn *.faa *.afa *.fas *.aln *.clustal *.sto *.stockholm)",
+            self, "Open File", "",
+            "Sequence files (*.fasta *.fa *.fna *.ffn *.faa *.afa *.fas *.aln *.clustal *.sto *.stockholm);;"
+            "Text files (*.txt);;"
+            "All files (*)",
         )
         if path:
             self.open_file(path)
@@ -245,16 +249,25 @@ class MainWindow(QMainWindow):
         if key in self._views:
             self._stack.setCurrentWidget(self._views[key])
             return
-        try:
-            doc = SequenceDocument.open(path)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Open", f"Could not open {path}:\n{exc}")
-            return
-        view = AlignmentView(doc)
-        view.status_message.connect(self._hover_label.setText)
-        current_scheme = get_scheme(self.scheme_combo.currentText())
-        view.state.set_scheme(current_scheme)
-        view.state.set_dots_for_matching(stored_dots_for_matching())
+
+        if path.suffix.lower() in TEXT_EXTS:
+            try:
+                view: AlignmentView | TextView = TextView(path)
+            except OSError as exc:
+                QMessageBox.warning(self, "Open", f"Could not open {path}:\n{exc}")
+                return
+        else:
+            try:
+                doc = SequenceDocument.open(path)
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.warning(self, "Open", f"Could not open {path}:\n{exc}")
+                return
+            view = AlignmentView(doc)
+            view.status_message.connect(self._hover_label.setText)
+            current_scheme = get_scheme(self.scheme_combo.currentText())
+            view.state.set_scheme(current_scheme)
+            view.state.set_dots_for_matching(stored_dots_for_matching())
+
         self._views[key] = view
         self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)
@@ -278,7 +291,8 @@ class MainWindow(QMainWindow):
         save_scheme(name)
         scheme = get_scheme(name)
         for view in self._views.values():
-            view.state.set_scheme(scheme)
+            if isinstance(view, AlignmentView):
+                view.state.set_scheme(scheme)
 
     def _on_conservation_bg_toggled(self, checked: bool) -> None:
         view = self._current_view()
@@ -326,7 +340,8 @@ class MainWindow(QMainWindow):
         enabled = dlg.dots_for_matching()
         save_dots_for_matching(enabled)
         for view in self._views.values():
-            view.state.set_dots_for_matching(enabled)
+            if isinstance(view, AlignmentView):
+                view.state.set_dots_for_matching(enabled)
 
     def _on_export_consensus(self) -> None:
         view = self._current_view()

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from seqstudio.app.io.format_detector import FASTA_EXTS, is_sequence_file
+from seqstudio.app.io.format_detector import FASTA_EXTS, TEXT_EXTS, is_sequence_file
 from seqstudio.app.io.sam_align import create_alignment_from_sam
 from seqstudio.app.sam_align_dialog import SamAlignDialog
 
@@ -46,6 +46,8 @@ class SequenceFilterProxy(QSortFilterProxyModel):
             return not info.fileName().startswith(".") and info.suffix() != "ssidx"
         p = Path(info.filePath())
         if p.suffix.lower() == ".sam":
+            return True
+        if p.suffix.lower() in TEXT_EXTS:
             return True
         return is_sequence_file(p)
 

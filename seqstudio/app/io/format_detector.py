@@ -15,6 +15,7 @@ class SequenceFormat(str, Enum):
 FASTA_EXTS = {".fasta", ".fa", ".fna", ".ffn", ".faa", ".afa", ".fas", ".mfa"}
 CLUSTAL_EXTS = {".aln", ".clustal", ".clw"}
 STOCKHOLM_EXTS = {".sto", ".stockholm", ".stk"}
+TEXT_EXTS = {".txt"}
 
 
 def is_sequence_file(path: Path) -> bool:
